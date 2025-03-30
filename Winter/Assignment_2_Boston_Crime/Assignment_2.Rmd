@@ -1,0 +1,251 @@
+---
+title: "W25_610_Assignment2"
+author: "Ben Carr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(ggpubr)
+library(GGally)
+library(discrim)
+library(klaR)
+library(DT)
+```
+
+```{r, echo = FALSE}
+boston <- read.csv("C:/Users/Ben/Downloads/boston_project1.csv")
+boston$crime_cat <- factor(boston$crime_cat, levels = c('Low', 'Medium', 'High'))
+```
+
+```{r, echo = FALSE}
+medv_box <- ggplot(boston, aes(x = crime_cat, y = medv, fill = crime_cat)) +
+  geom_boxplot()
+lstat_box <- ggplot(boston, aes(x = crime_cat, y = lstat, fill = crime_cat)) +
+  geom_boxplot()
+ptratio_box <- ggplot(boston, aes(x = crime_cat, y = ptratio, fill = crime_cat)) +
+  geom_boxplot()
+tax_box <- ggplot(boston, aes(x = crime_cat, y = tax, fill = crime_cat)) +
+  geom_boxplot()
+dis_box <- ggplot(boston, aes(x = crime_cat, y = dis, fill = crime_cat)) +
+  geom_boxplot()
+age_box <- ggplot(boston, aes(x = crime_cat, y = age, fill = crime_cat)) +
+  geom_boxplot()
+rm_box <- ggplot(boston, aes(x = crime_cat, y = rm, fill = crime_cat)) +
+  geom_boxplot()
+nox_box <- ggplot(boston, aes(x = crime_cat, y = nox, fill = crime_cat)) +
+  geom_boxplot()
+indus_box <- ggplot(boston, aes(x = crime_cat, y = indus, fill = crime_cat)) +
+  geom_boxplot()
+
+all_box <- ggarrange(plotlist = list(indus_box, nox_box, rm_box, age_box, dis_box, tax_box, ptratio_box, lstat_box, medv_box), ncol = 3, nrow = 3, common.legend = T)
+
+all_box
+```
+
+A summary of how each variable relates to crime rate is described below:
+
+Indus, the proportion of non-retail businesses per town, appears to increase with crime rate.
+
+Nox, the nitrogen oxides concentration, appears to increase with crime rate
+
+Rm, the average number of rooms per dwelling, appears to have very little correlation with crime rate
+
+Age, the proportion of owner-occupied homes built before 1940, appears to increase with crime rate
+
+Dis, the weighted mean of distances to Boston employment centers, appears to decrease with crime rate
+
+Tax, the property tax rate per $10,000, appears to increase with crime rate, although there are a number of outliers
+
+Ptratio, the pupil-teacher ratio per town, appears to increase with crime rate, although this predictor also has a number of outliers
+
+Lstat, the lower-status proportion per town, appears to increase with crime rate
+
+Medv, the median home value, appears to decrease with crime rate
+
+The ability of these factors to predict the crime category of a new town will be assessed with three different classifiers: Linear Discriminant Analysis, Quadratic Discriminant Analysis, and Naive Bayes. First, the assumptions of these models must be tested. 
+
+
+```{r, echo = FALSE}
+low_pairs <- ggpairs(boston[boston$crime_cat == "Low",1:9])
+low_pairs
+```
+```{r, echo = FALSE}
+med_pairs <- ggpairs(boston[boston$crime_cat == "Medium",1:9])
+med_pairs
+```
+```{r, echo = FALSE}
+high_pairs <- ggpairs(boston[boston$crime_cat == "High",1:9])
+high_pairs
+```
+
+The above ggpairs plots display the correlation structure for the low, medium, and high classes, respectively. Linear discriminant analysis relies on a constant correlation structure across classes, whereas quadratic discriminant analysis does not. Based on the correlation structure per class, displayed above, this assumption appears to be violated. Therefore, QDA may be more appropriate for this data set. 
+
+Additionally, Naive Bayes assumes independence between predictor variables. This appears to be mostly followed, but with a number of notable exceptions, with some predictors correlating as highly as .897. No variables will be removed, but this may indicate somewhat poor performance of the Naive Bayes model.
+
+```{r, echo = FALSE}
+QQ_medv <- ggplot(boston, aes(sample = medv)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_lstat <- ggplot(boston, aes(sample = lstat)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_ptratio <- ggplot(boston, aes(sample = ptratio)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_tax <- ggplot(boston, aes(sample = tax)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_dis <- ggplot(boston, aes(sample = dis)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_age <- ggplot(boston, aes(sample = age)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_rm <- ggplot(boston, aes(sample = rm)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_nox <- ggplot(boston, aes(sample = nox)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+QQ_indus <- ggplot(boston, aes(sample = indus)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+
+all_QQ <- ggarrange(plotlist = list(QQ_indus, QQ_nox, QQ_rm, QQ_age, QQ_dis, QQ_tax, QQ_ptratio, QQ_lstat, QQ_medv), ncol = 3, nrow = 3, common.legend = T)
+
+all_QQ
+```
+
+LDA and QDA both depend on the predictor variables following a multivariate normal distribution. Based on the QQ-plots generated for each predictor, this does not appear to be the case. The data set will be log transformed in an attempt to correct for this.
+```{r, echo = FALSE}
+normalized_boston <- log(boston[,1:9])
+normalized_boston <- cbind(normalized_boston, "crime_cat" = boston$crime_cat)
+
+QQ_medv <- ggplot(normalized_boston, aes(sample = medv)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_lstat <- ggplot(normalized_boston, aes(sample = lstat)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_ptratio <- ggplot(normalized_boston, aes(sample = ptratio)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_tax <- ggplot(normalized_boston, aes(sample = tax)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_dis <- ggplot(normalized_boston, aes(sample = dis)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_age <- ggplot(normalized_boston, aes(sample = age)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_rm <- ggplot(normalized_boston, aes(sample = rm)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_nox <- ggplot(normalized_boston, aes(sample = nox)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+QQ_indus <- ggplot(normalized_boston, aes(sample = indus)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log Transformed))") + 
+  ylab("Sample Quantiles")
+
+norm_QQ <- ggarrange(plotlist = list(QQ_indus, QQ_nox, QQ_rm, QQ_age, QQ_dis, QQ_tax, QQ_ptratio, QQ_lstat, QQ_medv), ncol = 3, nrow = 3, common.legend = T)
+
+norm_QQ
+```
+After log transformation the multivariate normality of the data set appears slightly better, but it still does not follow the QQ-plot closely for most variables. We will proceed with model fitting on the normalized data, but recognize that the performance of LDA and QDA may be relatively poor.
+```{r, echo = FALSE}
+lda_model = discrim_linear()
+qda_model = discrim_quad()
+bayes_model = naive_Bayes()
+
+my_recipe <- recipe(crime_cat ~ ., data = normalized_boston)
+
+folds <- vfold_cv(normalized_boston,
+                  v = 5,
+                  strata = crime_cat)
+
+wf <- workflow_set(preproc = list("model" = my_recipe), models = list("linear_discrim" = lda_model, "quad_discrim" = qda_model, "bayes" = bayes_model)) 
+
+wf_map <- wf %>%
+  workflow_map(resamples = folds,
+               verbose = TRUE, 
+               seed =  86,
+               metrics = metric_set(accuracy))
+```
+```{r, echo = FALSE}
+lda_acc <- wf_map %>% extract_workflow_set_result(id = "model_linear_discrim") %>% collect_metrics()
+
+qda_acc <- wf_map %>% extract_workflow_set_result(id = "model_quad_discrim") %>% collect_metrics()
+
+bayes_acc <- wf_map %>% extract_workflow_set_result(id = "model_bayes") %>% collect_metrics()
+```
+```{r, echo = FALSE}
+predictions <- rbind(lda_acc,qda_acc,bayes_acc)
+
+predictions <- cbind(Model = c("LDA", "QDA", "Naive Bayes"), predictions)
+datatable(predictions)
+```
+Using the metric of accuracy, QDA is the best performing model after cross-validation, with a mean accuracy of .868 compared to .804 and .808 for LDA and Naive Bayes, respectively. The QDA model was then fit on the entire data set, and the coefficients are reported below. 
+```{r, echo = FALSE}
+qda_model <- qda(crime_cat ~ ., data = normalized_boston)
+
+qda_model
+```
+

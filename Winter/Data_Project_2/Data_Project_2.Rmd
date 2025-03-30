@@ -1,0 +1,178 @@
+---
+title: "Data Report 2"
+author: "Final Assignment"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(pcaMethods)
+```
+
+
+## Part 1: PCA
+```{r, echo = FALSE}
+proteins <- read.csv("C:/Users/Ben/Downloads/protein_data.csv")
+t_proteins <- t(proteins[,-1])
+my_pca <- pca(t_proteins, method = "ppca")
+```
+
+I chose to use the "pca" method from pcaMethods because this implementation can handle missing values, while prcomp cannot. There are many missing values in this data set, and I would rather use a method that can natively deal with them over manually removing and losing data. 
+
+```{r, echo = FALSE, fig.cap="Figure 1: First two principal components from PCA explain a total of 81.3% of total variance"}
+pca_df <- merge(t_proteins, scores(my_pca), by = 0)
+pca_df$Type = ifelse(grepl("Core", pca_df$Row.names), "Core", "STB")
+pca_df <- pca_df %>% relocate(Type)
+pca_plot <- ggplot(pca_df, aes(x = PC1, y = PC2, color = Type)) + 
+  geom_point() +
+  stat_ellipse() +
+  xlab("PC1 (64.4%)") + 
+  ylab("PC2 (16.9%)")
+
+pca_plot
+```
+
+```{r, echo = FALSE}
+loads <- data.frame(loadings(my_pca))
+largest <- order(abs(loads$PC1), decreasing = T)
+
+head(largest)
+```
+Protein 806 has the greatest absolute value loading on PC1
+
+## Part 2: Survival Analysis
+
+We begin with the BrainCancer data set, which is part of the ISLR2 package.
+
+```{r, echo = FALSE, warning = FALSE}
+library(ISLR2)
+data(BrainCancer)
+
+```
+
+The rows index the 88 patients, while the columns contain the 8 predictors.
+
+```{r}
+names(BrainCancer)
+```
+
+1. How many female and how many male patients make up this dataset?
+```{r, echo = FALSE}
+table(BrainCancer$sex)
+```
+
+There are 45 female and 43 male patients in this dataset
+
+2. Using diagnosis, how many diagnosis types are there?
+```{r, echo = FALSE}
+table(BrainCancer$diagnosis)
+```
+
+There are three distinct diagnosis types, plus an "other" category
+
+
+```{r}
+table(BrainCancer$status)
+```
+
+Before beginning an analysis, it is important to know how the status variable
+has been coded. Most software, including R, uses the convention that
+status = 1 indicates an uncensored observation, and status = 0 indicates
+a censored observation. But some scientists might use the opposite coding.
+For the BrainCancer data set 35 patients died before the end of the study.
+
+
+Based on the status table, it appears that this data set uses 1 to represent a censored observation
+
+
+To begin the analysis, we create a Kaplan-Meier survival curve, using the survfit() function within the R survival library. Here time corresponds to Y and status corresponds to $\delta$.
+
+```{r, echo = FALSE, warning = FALSE, fig.cap = "Figure 2: Kaplan-Meier curve, depicting probability of survival over time for all patients"}
+# make sure to install the survival package #
+library(survival)
+fit.surv <- survfit(Surv(time, status) ~ 1, data = BrainCancer)
+
+# the survival package uses base R to plot, so you may see some unusual commands.
+# there is a package called ggsurvplot that you can explore for ggplot
+plot(fit.surv , xlab = "Months",
+ylab = "Estimated Probability of Survival")
+```
+
+Next we create Kaplan-Meier survival curves that are stratified by sex
+
+```{r, echo = FALSE, warning = FALSE, fig.cap = "Figure 3: Kaplan-Meier curve, depicting probability of survival over time for all patients stratified by sex"}
+fit.sex <- survfit(Surv(time, status) ~ sex, data = BrainCancer)
+plot(fit.sex , xlab = "Months",
+ylab = "Estimated Probability of Survival", col = c(2,4))
+legend("bottomleft", levels(BrainCancer$sex), col = c(2,4), lty = 1)
+```
+
+We can perform a log-rank test to compare
+the survival of males to females, using the survdiff() function. 
+
+2. Based on the computed p-value and a null hypothesis of no difference in survival, what do you conclude about this data?
+
+```{r, echo = FALSE, warning = FALSE}
+logrank.test <- survdiff(Surv(time, status) ~ sex, data = BrainCancer)
+logrank.test$pvalue
+```
+
+
+With a p-value of 0.23, we fail to reject the null hypothesis. There is insufficient evidence to conclude there is any difference is survival between sexes
+
+
+Next, we fit Cox proportional hazards models using the coxph() function. To begin, we consider a model that uses sex as the only predictor. coxph()
+
+```{r, echo = FALSE, warning = FALSE}
+fit.cox <- coxph(Surv(time, status) ~ sex, data = BrainCancer)
+summary(fit.cox)
+```
+
+3. Is there a difference in males and females based on the Cox regression (Likelihood ratio test)? Explain your answer.
+
+
+The Cox regression test yields similar results to the log rank test -- with sexMale having a p-value of .23, we again fail to reject null.
+
+
+Now we fit a model that makes use of additional predictors.
+
+```{r, echo = FALSE, warning = FALSE}
+fit.all <- coxph(
+Surv(time, status) ~ sex + diagnosis + loc + ki + gtv +
+stereo, data = BrainCancer)
+summary(fit.all)
+```
+
+4. Which other predictors are significant for survival?
+
+
+There are two predictors that achieve significance: a diagnosis of HG (High Grade) Glioma, and "ki". KI represents the Karnovsky index, an integer ranging from 0-100 that represents a patient's degree of functional impairment. A score of 100 represents no evidence of disease, and 0 represents death.
+
+
+Finally, we plot survival curves for each diagnosis category, adjusting for
+the other predictors. To make these plots, we set the values of the other
+predictors equal to the mean for quantitative variables, and the modal value
+for factors. We first create a data frame with four rows, one for each level
+of diagnosis. The survfit() function will produce a curve for each of the
+rows in this data frame, and one call to plot() will display them all in the
+same plot.
+
+```{r, echo = FALSE, warning = FALSE, fig.cap = "Figure 4: Probability of survival stratified by diagnosis category"}
+modaldata <- data.frame(
+diagnosis = levels(BrainCancer$diagnosis),
+sex = rep("Female", 4),
+loc = rep("Supratentorial", 4),
+ki = rep(mean(BrainCancer$ki), 4),
+gtv = rep(mean(BrainCancer$gtv), 4),
+stereo = rep("SRT", 4)
+)
+
+survplots <- survfit(fit.all, newdata = modaldata)
+plot(survplots , xlab = "Months",
+ylab = "Survival Probability", col = 2:5)
+legend("bottomleft", levels(BrainCancer$diagnosis), col = 2:5, lty = 1)
+```

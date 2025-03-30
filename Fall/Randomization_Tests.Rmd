@@ -1,0 +1,91 @@
+---
+title: "Randomization Test"
+author: "Your Name"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+```{r}
+scores = tibble(Subject = 1:47,
+                Treatment = rep(c("I","E"), c(24, 23)),
+                Scores = c(12.0, 12.0, 12.9, 13.6, 16.6, 17.2, 17.5, 18.2, 19.1, 19.3, 19.8, 20.3, 20.5, 20.6, 21.3, 21.6, 22.1, 22.2, 22.6, 23.1, 24.0, 24.3, 26.7, 29.7, 5.0, 5.4, 6.1, 10.9, 11.8, 12.0, 12.3, 14.8, 15.0, 16.8, 17.2, 17.2, 17.4, 17.5, 18.5, 18.7, 18.7, 19.2, 19.5, 20.7,
+21.2, 22.1, 24.0))	
+
+```
+
+Conduct a hypothesis test for $H_0: \mu_E - \mu_I = 0$ vs $H_1: \mu_E - \mu_I \neq 0$ where $\mu_E$ and $\mu_I$ are the mean scores for the Extrinsic (E) and Intrinsic (I) reward systems, respectively. 
+
+Use complete sentences to describe what you did and/or report results. Note that you should set a seed before doing randomization to make your results reproducible. The following sections of your report should be done:
+
+**1. State the hypotheses being tested, in general language. Do not just copy paste the mathematical notation from above.**
+
+The null hypothesis is that there is no difference in score between the intrinsic and extrinsic reward groups; the alternative hypothesis is that there is a difference. 
+
+**2. Plot histograms of the scorees by treatment (this should result in 2 histograms), and report your best estimate of the population parameter value ($\mu_E - \mu_I$).**
+
+```{r}
+
+stats <- scores %>% group_by(Treatment) %>% summarise(Mean = mean(Scores), Count = n())
+
+difference <- as.numeric(stats[1,2]) - as.numeric(stats[2,2])
+
+plot <- scores %>%
+  ggplot(aes(x = Scores, fill = Treatment)) +
+    geom_histogram() +
+    facet_wrap(~Treatment) +
+    theme_bw()
+
+print(stats)
+print(difference)
+print(plot)
+
+```
+The difference between the sample means is approximately 4.144, which is the best estimate we have for the difference in the population parameters.
+
+**3. Use randomization to calculate and store the differences in means for the two groups based on random group assignment. You should conduct at least 1000 randomizations.**
+
+```{r}
+
+randomized_means <- vector(mode = "numeric", length = 1000)
+set.seed(836)
+
+for (i in 1:1000) {
+  randomized <- sample_n(scores,47,replace = F) #Feels very janky but doing two calls of      sample_n allows for the same subject in both groups... couldn't find another way but this   should be valid
+  group1 <- randomized[1:23,]
+  group2 <- randomized[24:47,]
+
+  mean_diff <- mean(group1$Scores) - mean(group2$Scores)
+
+  randomized_means[i] = mean_diff
+}
+
+```
+
+
+**4. Plot a histogram of the randomized difference in mean values, and add a vertical line to denote the calculated difference based on the observed data. Report your p-value based on your randomizations and indicate if you reject or fail to rejcet the null hypothesis.**
+
+```{r}
+randomized_plot <- data.frame(randomized_means) %>%
+  ggplot(aes(x = randomized_means)) +
+    geom_histogram() +
+    geom_vline(xintercept = 4.1442028) +
+    geom_vline(xintercept = -4.1442028)
+    theme_bw()
+
+print(randomized_plot)
+
+left_tail <- sum(randomized_means < difference)
+right_tail <- sum(randomized_means > -difference)
+p_value <- (left_tail + right_tail) / 1000
+```
+**5. Provide a conclusion in the context of the problem. Do the different incentives result in different quality of writing?**
+
+Our calculated p-value of .002 is less than our alpha level of .05, so we reject the null hypothesis. Therefore, we have evidence to conclude that different incentives may result in different quality of writing. 
+
+

@@ -1,0 +1,204 @@
+---
+title: "Bi610 -- Report 1"
+author: "Ben Carr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(multcomp)
+library(ggsignif)
+```
+
+
+```{r echo = FALSE}
+abundance <- read.csv("C:/Users/Ben/Downloads/RelativeProportions.csv")
+abundance$Modification <- factor(abundance$Modification, levels = c('Unmodified', 'V8', 'V15')) #Setting levels so all charts print the way I want them
+```
+## Background
+
+This report describes the relative abundance of three versions of the same protein: the unmodified form, a Post-Translation Modification (PTM) of the 8th valine, and a PTM of the 15th valine. These proteoforms will be referred to as unmodified, V8, and V15, respectively. The data are drawn from 30 samples of breast cancer patients and describe the proportion of each proteoform in each sample. These methylation events are of interest because they are thought to suppress cell growth and therefore be less common in cancer patients.
+
+## Initial Data Exploration
+
+As mentioned previously, the data describe relative abundances of 3 proteoforms across 30 samples. There are no missing values; all three categorical variables -- unmodified, V8, and V15 -- are fully and equally represented in the data set:
+
+```{r echo = FALSE}
+categorical <- abundance %>% group_by(Modification) %>% summarize(Count = n()) %>% ungroup()
+
+knitr::kable(categorical, caption = "Table 1: Count of each Post-Translation Modification (PTM)")
+```
+
+The table below briefly summarizes the relative abundance of each proteoform:
+
+```{r echo = FALSE}
+continuous <- cholesterol %>%
+  summarise(across(
+    where(is.numeric), 
+    list(
+      Mean = ~mean(.x, na.rm = TRUE),
+      Median = ~median(.x, na.rm = TRUE),
+      `Standard Deviation` = ~sd(.x, na.rm = TRUE)
+    ), 
+    .names = "{col}_{fn}"
+  )) %>%
+  pivot_longer(cols = everything(), 
+               names_to = c("Variable", "Statistic"), 
+               names_sep = "_", 
+               values_to = "Value")
+
+knitr::kable(continuous, caption = "Table 2: Summary statistics for the relative abundance of each PTM")
+```
+
+The remainder of the report will assess whether or not this apparent different in means is reflective of the broader population, or simply a result of random variation due to pure chance -- in other words, if the difference in means is statistically significant. To make this determination, a statistical test will be performed and its results summarized.
+
+## Model Selection
+
+The data can be described as categorical explanatory variables that influence a continuous response variable (although proportion data is not strictly continuous, as it is derived from counts, the sample size appears to be large enough that it will behave as continuous data due to the Central Limit Theorem). In this scenario, it is common practice to use a statistical model known as ANOVA, or ANalysis Of VAriance. This is the gold-standard statistical test when comparing the means of more than two groups. However, a number of assumptions about the data must be confirmed before proceeding with the test.
+
+## Validation of Assumptions
+
+The ANOVA test is dependent upon 3 major assumptions:
+
+1. Independence of samples
+2. Normal distribution of the residuals
+3. Equal variance between groups
+
+Each of these assumptions will be tested in turn.
+
+### Assumption 1: Independent Samples
+
+The assumption of independent samples is validated in the experimental design phase. As there is no information to indicate this assumption has been violated -- such as multiple samples being collected from the same individual -- it is reasonable to determine that this assumption has been met.
+
+### Assumption 2: Normality
+
+The ANOVA test does not require the data to be normally distributed -- indeed, when there are significant differences between groups, it is highly likely that the data will not be normally distributed as a result. However, it is necessary to test the normality of the residuals to ensure that any inference made from this model is valid. Residuals are defined as the difference of each observed value from the predicted value, or group mean. 
+
+To assess this assumption, residuals are calculated for each data point, and the results are plotted on a QQ-plot. The QQ-plot compares quantile distributions for a theoretical normal distribution and the distribution of the actual residuals. Since a perfectly normal distribution of residuals would exactly match the theoretical quantiles, this is a useful plot for judging the degree to which the normality assumption is violated; in general, the degree of deviation from the straight line drawn in the center of the graph indicates the degree to which the residuals stray from normality.
+
+```{r echo = FALSE, fig.cap = "Figure 1: QQ plot of the residuals. The residual of each data point is represented  by a point, and the black line is referred to as the line of normality. Minimal deviation from the line of normality represents a normally distributed sample."}
+abundance <- abundance %>% group_by(Modification) %>% mutate(Residual = Proportion - mean(Proportion))
+
+QQ <- ggplot(abundance, aes(sample = Residual)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_bw() +
+  xlab("Theoretical Quantiles") + 
+  ylab("Sample Quantiles")
+
+QQ
+```
+The assumption of normally distributed residuals is only considered to be violated when the data drift dramatically from the line of normality on a QQ plot (Figure 1). Visual inspection of the plot reveals that this is not the case -- although a few outliers on the upper tail drift away, the vast majority of the data are along the line of normality. This result shows that the residuals likely follow a normal distribution. Therefore, it is reasonable to conclude that the assumption of normally distributed residuals is not violated.
+
+### Assumption 3: Equal variance
+
+The final assumption of the ANOVA test is that variance is roughly equal between groups. Similarly to the previous check, this assumption is tested on the residuals, rather than the raw data. Boxplots are constructed displaying the distribution of the residuals for each group, and the exact values are calculated for validation of the visual assessment.
+
+```{r echo = FALSE, fig.cap = "Figure 2: Boxplots displaying the distribution of the residuals for each PTM group. Median values are shown by the dark black line, while the top and bottom of the boxes represent the 75th and 25th percentiles, respectively. The tails show the range of all values, and outliers are represented by a single point."}
+
+Variance <- ggplot(abundance, aes(x = Modification, y = Residual, fill = Modification)) +
+  geom_boxplot() +
+  theme_bw()
+
+Variance
+
+Var_summary <- abundance %>% summarise(Variance = var(Residual))
+
+knitr::kable(Var_summary, caption = "Table 3: Calculation of variance of the residuals for each PTM")
+```
+The assumption of equal variance is only considered to be violated if the difference in variance is egregious. Visual inspection of the boxplots in figure 2 reveals that the overall distribution of the residuals is highly similar between all 3 groups. Additionally, calculation of the variance of the residuals for each group, displayed in table 3, demonstrates numerically that these values do not dramatically differ between groups. For these reasons, it is reasonable to conclude that the assumption of equal variance is not violated.
+
+## Model Testing
+
+Since none of the assumptions appear to be violated, an ANOVA test will be performed on the un-transformed data. This test will address the following null and alternative hypotheses:
+
+$H_0$: There is no significant difference between any of the PTM group means
+
+$H_a$: At least one of the PTM group means is significantly different from the others
+
+These hypotheses will be tested at an alpha level of .05.
+
+### ANOVA results:
+```{r, echo = FALSE}
+ANOVA <- aov(Proportion ~ Modification, data = abundance)
+
+ANOVA_summary <- summary(ANOVA)
+cleaned_ANOVA <- data.frame(
+  "Comparison" = "Modification",
+  "F-Statistic" = ANOVA_summary[[1]][["F value"]],
+  "p value" = "2.077⋅10−8"
+)[1,]
+
+# $2.0773 \cdot 10^{-8}$
+knitr::kable(
+  cleaned_ANOVA,
+  caption = "Table 4: ANOVA results.",col.names = c("Comparison", "F-Statistic","p value"))
+```
+The ANOVA test outputs two results of interest: the F statistic, and the P value. The F statistic represents the ratio of variance between groups to variance within groups. In other words, an F statistic significantly greater than 1 represents more variation between groups than within, which lends credence to the claim that the group means are significantly different. In this case, an F statistic of 21.828 indicates nearly 22 times more inter-group variation than intra-group, a finding that would not be consistent with the null hypothesis.
+
+The P value is a well-known statistical metric -- a P value below the alpha level indicates that the null hypothesis should be rejected. In this case, a P value of $2.077 \cdot 10^{-8}$ indicates that the null hypothesis should indeed be rejected, suggesting that at least one group mean is significantly different. 
+
+## Pairwise comparisons
+
+Although the ANOVA test has indicated that at least one group mean is significantly different, it remains unclear which one. To address this, pairwise comparisons must be performed, with p value adjustment for multiple comparisons.
+
+The first question posed by the chemists is whether or not the unmodified version is more abundant than the modified forms. Additionally, they are curious if either modified proteoform is more abundant than the other. To answer these questions, comparisons between the unmodified protein and each modified proteoform (V8 and V15) will be performed. 
+
+```{r, echo = FALSE}
+glht_summary <- summary(glht(ANOVA, linfct = mcp(Modification = "Tukey")))
+cleaned <- data.frame(
+  "Estimated Difference" = glht_summary$test$coefficients,
+  "Std. Error" = glht_summary$test$sigma,
+  "p value" = glht_summary$test$pvalues
+)
+
+knitr::kable(
+  cleaned,
+  caption = "Table 5: Comparisons between all proteoforms",
+  col.names = c("Comparison", "Estimated Difference", "Standard Error", "p value"))
+```
+
+Using Tukey's method of multiple comparisons, it is clear that the unmodified form of the protein is significantly more abundant than either modified proteoform ($p < .0001$). Additionally, it can be shown that neither modified proteoform is significantly more abundant than the other ($p = 0.837$). 
+
+```{r echo = FALSE, fig.cap = "Figure 3: Average relative proportions of the unmodified, V8, and V15 proteoforms. Median values are shown with black bars, and significant differences are indicated by ***"}
+
+ggplot(abundance, aes(x = Modification, y = Proportion, fill = Modification)) +
+  geom_boxplot() +
+  theme_bw() + 
+  geom_signif(comparisons = list(c("Unmodified", "V8"),c("Unmodified", "V15")), map_signif_level = TRUE, step_increase = .2)
+```
+
+## Biological Interpretation
+
+The original hypothesis of the chemists is that methylated proteins at the 8th and 15th valine (V8 and V15) suppress cell growth and are less prevalent in cancer patients. This report has shown that V8 and V15 proteoforms are statistically less abundant than unmethylated proteins in breast cancer patients (figure 3). Additionally, it has been shown that neither modified proteoform is differently abundant than the other (figure 3).However, causality can not be determined without further experimental research. Furthermore, it may be necessary to obtain a sample from patients without breast cancer in order to determine if the abundance is significantly different in those with cancer from a healthy control.
+
+## TL;DR
+
+Below are direct responses to the questions posed by the chemists.
+
+1.
+
+Q: Is the unmodified version of the protein more abundant than the modified versions of the protein on average?
+
+A: Yes, the unmodified protein is more abundant than both the V8 proteoform ($p < .0001$) and the V15 proteoform ($p < .0001$)
+
+2.
+
+Q: Of all the assumptions of your selected test, which ones are met by this data and which ones are not met? How did you adjust for those that are not met?
+
+A: All assumptions (independent samples, equal variance, and normally distributed residuals) of the ANOVA test were met -- adjustment was not necessary.
+
+3.
+
+Q: Among the modified proteins, is one proteoform more abundant on average? If not, which form is more abundant on average? Use ggsignif to attribute significant comparisons correctly for all significant differences, and step_increase to differentiate each significance line.
+
+A: Neither methylated proteoform is significantly more abundant than the other ($p = 0.837$).
+
+4.
+
+Q: Finally, interpret these results in the context of the biology presented in the data section. You may keep this interpretation to a few sentences, but be specific.
+
+A: These results indicate that the unmodified protein is significantly more abundant in breast cancer patients, but further research is necessary to determine causality and compare to healthy patients.
+

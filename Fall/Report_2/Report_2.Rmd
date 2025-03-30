@@ -1,0 +1,367 @@
+---
+title: "Report 2"
+author: "Ben Carr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(multcomp)
+library(ggsignif)
+library(patchwork)
+library(GGally)
+```
+
+```{r echo = FALSE}
+cholesterol <- read.csv("C:/Users/Ben/Downloads/data_report2.csv")
+```
+
+```{r echo = FALSE}
+NA_sum <- colSums(is.na(cholesterol))
+```
+
+## Background
+
+The provided data set describes several variables, taken from a sample of 1500 patients in Portland, OR. The purpose of this report is to determine which of these variables, if any, have a significant effect on cholesterol levels. This analysis will facilitate two similar but distinct goals: identifying variables that significantly influence cholesterol and making predictions of cholesterol levels for individuals not include in this cohort, based on these variables. The variables included are as follows:
+
+Cholesterol: The response variable of interest, representing the individual's cholesterol level in mg/dL. 
+
+Age: Integer value representing the years of age of the individual.
+
+Education: Integer value where 1 corresponds to the individual completing high school, 2 represents completion of a undergraduate degree, 3 represents completion of a graduate degree, and 4 represents completion of trade school
+
+Cigarettes per day: Integer value representing the individual's average number of cigarettes smoked daily
+
+Systolic blood pressure: The individual's systolic blood pressure in mmHg
+
+Diastolic blood pressure: The individual's diastolic blood pressure in mmHg
+
+BMI: The individual's Body Mass Index
+
+Heart rate: Resting heart rate, measured in beats per minute
+
+Glucose: The fasting blood glucose level, in mg/dL
+
+Ten Year CHD: Binary (yes / no) representing whether or not the individual was found to have Chronic Heart Disease after a ten-year follow up
+
+Sex: Binary (male / female) describing the individual's assigned sex at birth
+
+Smoker: Binary (yes / no) describing if the individual is a regular smoker or not
+
+On BP Meds: Binary (yes / no) describing if the individual is currently taking blood pressure medication
+
+Hypertension: Binary (yes / no) describing if the individual has been diagnosed with hypertension
+
+## Initial Data Exploration
+
+The response variable of interest for this study is total cholesterol level, the distribution of which is summarized below. 
+
+```{r, echo = FALSE, fig.cap = "Figure 1: Distribution of total cholesterol levels in entire cohort."}
+cholesterol %>% ggplot(aes(x = totChol)) +
+  geom_histogram(bins = 100) +
+  theme_bw() + 
+  xlab("Total Cholesterol")
+```
+```{r, echo = FALSE}
+chol_mean = mean(cholesterol$totChol)
+chol_sd = sd(cholesterol$totChol)
+chol_med = median(cholesterol$totChol)
+```
+The distribution of cholesterol seen in Figure 1 is close to normal, with a mean of 235.0103 mg/dL , a standard deviation of 43.4468 mg/dL, and a median value of 232 mg/dL.
+
+This data set contains a number of both continuous and categorical explanatory variables. To understand the basic distribution of each of these variable types, summary statistics were generated for each type separately. 
+
+```{r, echo = FALSE, warning = FALSE}
+cont <- cholesterol[, c("age", "cigsPerDay", "sysBP", "diaBP", "BMI", "heartRate", "glucose")]
+cat <- cholesterol[, c("hypertension", "onBPmeds", "smoker", "sex", "TenYearCHD", "education")]
+
+continuous <- cholesterol %>%
+  summarise(across(
+    where(is.numeric),
+    list(
+      Mean = ~mean(.x, na.rm = TRUE),
+      Median = ~median(.x, na.rm = TRUE),
+      SD = ~sd(.x, na.rm = TRUE)
+    )
+  )) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = c("Variable", ".value"),
+    names_sep = "_"
+  )
+
+knitr::kable(continuous, caption = "Table 1: Summary statistics for the continuous explanatory variables")
+
+```
+It can be noted in table 1 that the mean and median for almost every continuous explanatory variable are very close to each other. Therefore, it is interesting to note that this implies almost all explanatory variables are close to normally distributed. The notable exception to this is cigarettes per day, with a mean of 8.7488 and a median of 0, implying that most patients do not smoke any cigarettes, but a small number of individuals smoke many.
+
+```{r, echo = FALSE, warning = FALSE, fig.cap = "Figure 2: Summary of counts for each categorical explanatory variable."}
+cat1 <- cat %>%
+  ggplot(aes(x = hypertension)) +
+  geom_bar()
+cat2 <- cat %>%
+  ggplot(aes(x = onBPmeds)) +
+  geom_bar()
+cat3 <- cat %>%
+  ggplot(aes(x = smoker)) +
+  geom_bar()
+cat4 <- cat %>%
+  ggplot(aes(x = sex)) +
+  geom_bar()
+cat5 <- cat %>%
+  ggplot(aes(x = TenYearCHD)) +
+  geom_bar()
+cat6 <- cat %>%
+  ggplot(aes(x = education)) +
+  geom_bar()
+
+(cat1 | cat2 | cat3) /
+      (cat4 | cat5 | cat6)
+```
+
+The majority of categorical variables clearly have sufficient data in each category. "onBPmeds" and "TenYearCHD" are notable exceptions, with very small counts in the "on meds" and "yes" categories. Later analysis will determine if these low counts are problematic. 
+
+```{r, echo = FALSE, fig.cap = "Figure 3: Exploration of variables suspected to be significant based on prior assumptions. Further analysis will determine if these variables are significantly explanatory"}
+plot1 <- cholesterol %>% ggplot(aes(x = BMI, y = totChol)) + geom_point()
+
+plot2 <- cholesterol %>% ggplot(aes(x = cigsPerDay, y = totChol)) + geom_point()
+
+plot3 <- cholesterol %>% ggplot(aes(x = age, y = totChol)) + geom_point()
+
+plot1 + plot2 + plot3
+```
+
+The goal of this report is to analyze the combined effect of several explanatory variables on our response variable. However, it is potentially interesting to select and plot a few notable candidates that may appear to have a strong correlation with cholesterol levels on their own (Figure 3). Although there visually appears to be a correlation between age and cholesterol, as well as BMI and cholesterol, further analysis will determine if this is statistically significant. 
+
+## Data Cleaning
+
+Before the data can be analyzed, it must be cleaned. Cleaning the data, by removing sections that are unhelpful or counterproductive, will ensure that any inference drawn on the remaining data set is robust. There are a few conditions that will lead to likely removal of the offending data:
+
+-NA values: Missing data, represented in R as "NA" values, will create errors or complications with many algorithms used for statistical analysis. Since these problems may impact the quality of conclusions drawn from these algorithms, it is generally considered best practice to remove the entire rows of individuals containing NA values. This does reduce the sample size of data available for analysis, so it is not recommended when the number of NA values is very large -- therefore, it is important to count the number of these values in order to ensure that there are still sufficient data for inference. 
+
+-Categorical data with very low counts: In the case of a categorical or binary variable with highly imbalanced counts favoring one category, the variable loses value as a meaningful predictor. Individuals in the underrepresented category will likely have too small a sample size to draw meaningful conclusions, and individuals in the over represented category will likely have more variability within their group than between groups. In this case, the increase in dimensionality that comes with including such variables in a multiple linear regression model is not worth the limited insight that including this variable may provide. For example, a study containing data that is 95% male and 5% female would likely draw stronger conclusions simply by omitting the female responses and limiting the scope of inference to only male individuals.
+
+-Multicolinearlity: This phenomenon refers to having several explanatory variables that are correlated with each other, in addition to the response variable. For example, if a model was designed to predict the price of a house based on several factors, including the total square footage as well as the square footage of each room would likely constitute multicolinearity. This can impact quality of inference by inflating the significance of these variables.
+
+-Biological irrelevance: Finally, variables that have no physiological or biological meaning should not be included in a predictive model. Although correlations may be found with non-biological variables, this is almost certainly the result of underlying variables that are correlated with both the explanatory and result variables. For example, a correlation may be found between wealth and some health outcome, but this is very likely to be the result of another factor such as nutrition being correlated with both wealth and this health outcome. Therefore, non-biological variables are highly likely to have spurious correlations with a biological response variable, even if statistical significance is found. 
+
+The data were cleaned under this criteria, and the results are summarized as follows.
+
+### NA values
+```{r, echo = FALSE}
+NA_table <- data.frame("Variable" = names(NA_sum), "Count of missing values" = as.numeric(NA_sum))
+
+colnames(NA_table) = c("Variable", "Count of missing values")
+
+knitr::kable(NA_table, caption = "Table 2: Count of missing values per variable")
+```
+As mentioned previously, NA values are highly problematic for analysis, and should be avoided whenever possible. Since the number of missing values is quite small in comparison to the total number of samples (table 2), it is appropriate to remove all individuals with any NA values. 
+
+```{r, echo = FALSE}
+cholesterol <- na.omit(cholesterol)
+```
+
+### Analysis of Multicolinearity
+
+```{r, echo = FALSE, warning = FALSE, fig.cap = "Table 3: Colinearity table between all continuous explanatory variables. Pearson's correlation coefficient is calculated between each explanatory variable to evaluate multicolinearity. Variables with a strong coefficient of correlation (< ~.6) are likely candidates for removal."}
+ggpairs(
+  cont,
+  upper = list(continuous = wrap("cor", size = 4)),
+  lower = list(continuous = "blankDiag"),
+  diag = list(continuous = "blankDiag")
+)
+```
+
+```{r, echo = FALSE}
+cholesterol <- cholesterol %>% mutate("Pulse Pressure" = sysBP - diaBP)
+```
+Inclusion of both systolic and diastolic blood pressure is likely to be problematic because these are highly related values, and therefore susceptible to multicolinearity. In fact, the Pearson's correlation coefficient was found to be 0.796, a considerably strong correlation (Table 3). This indicates reasonably strong evidence for multicolinearity. Furthermore, systolic or diastolic blood pressure have little biological significance on their own, because evaluation of hypertension requires consideration of both types of blood pressure. In situations where hypertension needs to be evaluated with a single number, the Pulse Pressure (the difference between systolic and diastolic pressure) is used. Therefore, this variable was added to the data set due to its greater biological relevance. As this is directly calculated from systolic and diastolic pressure, it is unsurprisingly highly colinear with systolic blood pressure, with a correlation coefficient of 0.85. As a result of this multicolinearity and low biological relevance, systolic and diastolic blood pressure were both removed as predictor variables from this data set, and pulse pressure was added. 
+
+### Blood pressure medication
+
+```{r, echo = FALSE, message = FALSE}
+```
+Only 38 individuals are reported as being on blood pressure medication, out of a sample of 1500. This is very close to the traditional rule of thumb that categorical data with counts below 30 should be removed. Although this category could conceivably be removed, it was kept due to the biological and epidemiological relevance of blood pressure medication. An estimated 61.9 million adults in the United States are currently taking anti-hypertensive medication$^1$. For this reason, the utility of including this metric was determined to be high enough to justify inclusion. 
+
+### Education
+
+Education is clearly a non-biological variable, and therefore a likely target for removal. It is possible that a statistically significant correlation will be found between education and total cholesterol level. However, as mentioned previously, any correlation found would likely be the result of a confounding variable that is correlated with both education and cholesterol level. Additionally, education level has no clinical applicability -- if a patient is found to have high cholesterol, it is not realistic for a doctor to prescribe increasing or decreasing their education level. For these reasons, education was removed from the data set. 
+
+## Model Selection
+
+The goal of this study is to identify the variables that are most correlated with total cholesterol. The given variables are a combination of both categorical and continuous. In this type of situation, the universally agreed upon best practice is to fit a multiple linear regression model$^2$. 
+
+## Validation of Assumptions
+
+There are 4 main assumptions to validate of the multiple linear regression model:
+
+1. Independence of samples
+2. Linear relationship between variables
+3. Constant variance of residuals
+4. Normal distribution of the residuals
+
+### Independence of Samples (1)
+The assumption of independent samples is validated in the experimental design phase. As there is no information to indicate this assumption has been violated -- such as multiple samples being collected from the same individual -- it is reasonable to determine that this assumption has been met.
+
+### Linear Relationship (2) and Equal Variance Assumptions (3)
+```{r, echo = FALSE}
+removed <- cholesterol %>% dplyr::select(-education, -sysBP, -diaBP)
+
+removed2 <- removed
+removed2$totChol <- log10(removed2$totChol)
+
+
+first_model <- lm(totChol ~ ., data = removed)
+second_model <- lm(totChol ~ ., data = removed2)
+```
+
+```{r, echo = FALSE, fig.cap = "Figure 4: Plot of residuals vs predicted residuals before and after log transformation. Equal variance residuals should appear as a cloud without any notable shapes or patterns, equally distributed throughout the range of the chart"}
+my_resids <- data.frame(
+  Residuals = first_model$residuals,
+  Predicted.Values = predict(first_model, removed %>% dplyr::select(-totChol))
+) 
+my_resids2 <- data.frame(
+  Residuals = second_model$residuals,
+  Predicted.Values = predict(second_model, removed2 %>% dplyr::select(-totChol))
+) 
+
+  
+plot1a <- ggplot(my_resids, aes(x = Predicted.Values, y = Residuals)) + 
+    geom_point() +
+    geom_hline(yintercept = 0, color = "firebrick") +
+    xlab("Predicted Values (Untransformed)")
+plot1b <- ggplot(my_resids2, aes(x = Predicted.Values, y = Residuals)) + 
+    geom_point() +
+    geom_hline(yintercept = 0, color = "firebrick") +
+    xlab("Predicted Values (Log10 transformation)")
+
+plot1a + plot1b
+```
+The distribution of residuals (Figure 4) do not inspire confidence in validating the equal variance assumption. Although the distribution is relatively symmetric about the x = 0 line, there is significant clustering in this area. To remedy this, a log10 transformation was applied to the response variable (total cholesterol), seen on the right of Figure 4. After this transformation, the distribution of residuals became much more evenly dispersed throughout the range of the graph. After applying this transformation, the assumption of equal variance appears to have been satisfied.
+
+The assumption of a linear model being appropriate can also be evaluated by this figure. In cases where a linear model is not appropriate, a nonlinear shape such as a parabola should appear in the residuals. There does not appear to be a notable violation of linearity in the untransformed data, and this becomes even more true once the log transformation is applied. For this reason, this assumption is seen to be validated on the log transformed data.
+
+
+### Normal Distribution Assumption (4)
+
+```{r, echo = FALSE, fig.cap = "Figure 5: QQ plot of the residuals before and after log transformation. The residual of each data point is represented  by a point, and the black line is referred to as the line of normality. Minimal deviation from the line of normality represents a normally distributed sample"}
+norm1 <- ggplot(my_resids, aes(sample = Residuals)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Untransformed)") + 
+  ylab("Sample Quantiles")
+norm2 <- ggplot(my_resids2, aes(sample = Residuals)) +
+  geom_qq() + 
+  geom_qq_line() +
+  xlab("Theoretical Quantiles (Log10 Transformation)") + 
+  ylab("Sample Quantiles")
+norm1 + norm2
+```
+A QQ plot helps evaluate the assumption of normally distributed residuals by visually observing how the data stray from the line of normality, depicted as the black line bisecting each graph. In the untransformed data, there is significant deviation from the line of normality noted in almost all points. However, after the log transformation is applied, the data fit the line almost perfectly. 
+
+Due to the utility of the log transformation in validating the assumptions of linear regression, all further analysis will be conducted with this transformed data. 
+
+## Fitting the Model
+```{r, echo = FALSE, message = FALSE, include = FALSE}
+both <- stepAIC(object = second_model)
+```
+Now that all assumptions have been validated, a linear model can be fit. Variable selection for a multiple linear regression model evaluates each combination of possible variables with the following hypotheses:
+
+$H_0$: None of the possible explanatory variables are significantly correlated with the response variable
+
+$H_a$: At least one of the explanatory variables is significantly correlated with the response variable. 
+
+This hypothesis will be tested at an alpha level of .05. Any p-values of statistical tests below this level will indicate that the null hypothesis should be rejected.
+
+Through this process, the most important risk factors will be identified. This allows the model to make robust predictions without the complexity that comes with high dimensionality, and identifies the most clinically significant risk factors. 
+
+This process can be automated through the StepAIC function, which iteratively either adds or removes variables to identify the best set of predictors. This process can be done by either starting with no predictors and adding one at a time, starting with all predictors and removing one at a time, or conducting both analyses and selecting a set of variables that are selected by both. This method is considered to be more robust than either on its own, but is only possible with sufficiently large sample sizes. In this case, a sample size of 1444 was determiend to  be sufficient and the forward / backward combined analysis was conducted.
+
+```{r, echo = FALSE}
+AIC_results <- data.frame(
+  Variable = c("Intercept", "Age", "BMI", "TenYearCHD -- yes", "sex -- M", "smoker -- yes", "onBPmeds -- yes"),
+  Estimate = c(2.1894, 0.0024, 0.0021, 0.01133, -0.0151, 0.0077, 0.0195),
+  `Std. Error` = c(0.0174, 0.0002, 0.0005, 0.0058, 0.00409, 0.0041, 0.0124),
+  `t value` = c(125.308, 9.844, 4.317, 1.953, -3.693, 1.879, 1.575),
+  `Pr(>|t|)` = c("< 2e-16", "< 2e-16", "1.69e-05", "0.05098", "0.00023", "0.06051", "0.11551"),
+  Significance = c("***", "***", "***", ".", "***", ".", "")
+)
+
+knitr::kable(AIC_results, caption = "Table 4: Summary of StepAIC output. This set of variables represents the smallest number of explanatory variables that can make robust predictions of the response variable")
+```
+```
+Signif. codes:  
+0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+```
+
+## Biological Interpretation
+
+The following variables were found to be the most significant predictors of total cholesterol levels:
+
+-Age: Positive Correlation
+
+-BMI: Positive Correlation
+
+-Ten Year CHD: Yes
+
+-Sex: Male
+
+-Smoker: Yes
+
+-On BP Meds: Yes
+
+All of these variables were found to be highly significant with a relatively low effect size. In other words, it can be said with high confidence that these variables have relatively modest effect on total cholesterol levels. Many of these trends are well known predictors of hyperlipidemia, which builds confidence in the validity of these findings. For example, smoking status and age are well documented to positively correlate with cholesterol levels$^3$. However, the negative slope associated with male sex is notable, as this contradicts conventional wisdom that males typically have a higher risk of hyperlipidemia$^4$. However, this can likely be explained by the fact that total cholesterol is the response variable in this study, rather than distinguishing types of cholesterol such as HDL and LDL, colloquially referred to as "good cholesterol" and "bad cholesterol", respectively. Most clinical studies regarding hyperlipidemia tend to focus on "bad cholesterol", as this value is more predictive of deleterious health outcomes. Therefore, it is not necessarily a contradiction that males could have higher LDL ("bad") cholesterol but lower total cholesterol.
+
+In summary, this final model provides a set of predictors that explain a large amount of variance in total cholesterol across individuals. This does not necessarily imply that the variables left out of the model are useless, but the added predictive value does not outweigh the increase in dimensionality that adding these variables entails. Further research may validate these other variables as robust predictors of total cholesterol values, but more data is needed to determine if this is the case. 
+
+## TL;DR
+
+Below are summarized responses to the questions posed. 
+
+1. Which variables are continuous? Which variables are categorical? What are their summary statistics? Are there any categorical variables with low counts? How do you intend to handle those? 
+
+These results can be found in Table 1 and Figure 2. The categorical variable with the lowest count was "onBPmeds", with 38 individuals in the "yes" category. Despite this low count, this feature was kept due to its biological relevance. 
+
+2. Plot the response variable vs. every predictor variable and keep a few plots with interesting trends that may be predictive of cholesterol levels. Were they predictive? 
+
+Plots were produced of BMI, cigarettes per day, and age against total cholesterol, as these were suspected to be the most highly correlated. BMI and age were included in the final model, but cigarettes per day was ultimately not found to be a reliable predictor of total cholesterol levels.
+
+3. Which variables contribute to increased levels of cholesterol? Which variables contribute to reduced levels of cholesterol? Which variables have no effect? What variables could potentially be removed?
+
+Increase: Age, BMI, Ten Year CHD (yes), Smoker (yes), and on BP meds (yes)
+
+Decrease: Sex (male)
+
+No effect: Cigarettes per day, pulse pressure, heart rate, glucose, hypertension
+
+Removed: Education, systolic blood pressure, and diastolic blood pressure were removed from the model. Blood pressure medication status could conceivably be removed due to its low count, but the determination was made to include it.
+
+4. What model did you select and why (in layman's terms)?
+
+A multiple linear regression model was selected due to the nature of the data (continuous and categorical explanatory variables with a continuous response variable)
+
+5. Of all the assumptions of your selected test/model, which ones are met by this data and which ones are not met? How did you adjust for those that are not met? If there is multicolinearity in this data, did you adjust anything for it and how? 
+
+The assumptions of equal variance and normally distributed residuals were not met. However, after adjusting the data with a log transformation, these assumptions were met. 
+
+Multicolinearity was found between the two measures of blood pressure, so these were removed and replaced with pulse pressure.
+
+6. What is the minimum set of variables needed to be measured for this study?
+
+The minimum set of variables to be measured in this study is 6, the features listed above.
+
+7. What trends are known and confirmed in literature? What trends are new? Are these new trends real or perhaps a sampling error based on this data set? 
+
+The negative correlation between male sex and cholesterol levels is potentially a new trend -- however, as explained above, this is likely due to not distinguishing between total cholesterol and HDL / LDL cholesterol. Additionally, it could be a sampling error due to this data set, but this is unlikely with a sample size of 1500. It is unlikely that this represents a true reversal of the established trend of sex's influence on cholesterol levels, based on the much greater body of research supporting the established trend.
+
+## Citations
+
+1: CDC (https://www.cdc.gov/mmwr/volumes/69/wr/mm6914a1.htm)
+
+2: Newcastle University (https://www.ncl.ac.uk/webtemplate/ask-assets/external/maths-resources/statistics/regression-and-correlation/multiple-regression.html)
+
+3: Genest J Jr, Cohn JS. Clustering of cardiovascular risk factors: targeting high-risk individuals. Am J Cardiol. 1995 Jul 13;76(2):8A-20A. doi: 10.1016/s0002-9149(05)80010-4. PMID: 7604805.
+
+4: Nestruck AC, Davignon J. Risks for hyperlipidemia. Cardiol Clin. 1986 Feb;4(1):47-56. PMID: 2871933.

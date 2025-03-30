@@ -1,0 +1,110 @@
+---
+title: "ANOVA Contrast ICA"
+author: "Ben Carr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# outside of the markdown install the palmerpenguins data package and multcomp #
+library(palmerpenguins)
+library(multcomp)
+library(tidyverse)
+```
+
+Use the Palmer penguins dataset. Do the following:
+
+1. Plot boxplots of bill length by species using ggplot
+2. Conduct a one-way ANOVA test to see if bill lengths of penguins differ by species. Report the p-value and a conclusion (i.e. is at least one mean different) 
+3. Conduct diagnostics to see if assumptions of normality and equal variances are reasonable.
+4. Regardless of results in 3, Use contrasts to test for the following pairwise comparisons: Adelie - Chinstrap, Chinstrap - Gentoo. Report the estimated difference in means and p-value for test of equal means for each comparison.
+5. Conduct all pairwise group comparisons using TukeyHSD function
+
+```{r data}
+# load data #
+data("penguins")
+```
+
+## Q0: Statement of hypotheses
+
+Null hypothesis: There is no significant difference in mean bill length between species
+Alternative hypothesis: At least one species has a significant difference in mean bill length
+Alpha level: .05
+
+## Q1: Plot boxplots of bill length by species
+
+```{r message = FALSE, warning = FALSE}
+MyBoxplot <- penguins %>% ggplot(aes(x = species, y = bill_length_mm, fill = species)) +
+  geom_boxplot() +
+  theme_bw() + 
+  geom_point() +
+  ylab("Bill Length (mm)") +
+  xlab("Species")
+
+MyBoxplot
+```
+## Q2: Conduct a one-way ANOVA to see if bill length varies between species
+
+```{r}
+MyModel <- aov(bill_length_mm ~ 0 + species, data = penguins)
+
+summary(MyModel)
+```
+
+Our ANOVA returns a p-value less than 2 * 10^-16, well below our alpha level of .05. Therefore, we can reject our null hypothesis and conclude that there is at least one group with a significant difference in mean bill length.
+
+## Q3: Test assumptions of normality and equal variance
+
+```{r}
+
+penguins <- na.omit(penguins) %>% group_by(species) %>% mutate(Residual = bill_length_mm - mean(bill_length_mm))
+
+QQ <- ggplot(penguins, aes(sample = Residual)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_bw() +
+  xlab("Theoretical Quantiles") + 
+  ylab("Sample Quantiles")
+
+QQ
+```
+The distribution of residuals on our qq-plot appears to follow the line of normality quite well. Although there is a slight drift at the upper and lower tails, the vast majority of the points appear to sit along the line. Therefore, we will proceed to our next check as the normality of residuals assumption does not appear to be violated.
+
+```{r}
+Variance <- ggplot(penguins, aes(x = species, y = Residual, fill = species)) +
+  geom_boxplot() +
+  theme_bw()
+
+Variance
+
+penguins %>% summarise(Variance = var(Residual))
+
+```
+
+Visually, our boxplots of the variance of the residuals look very similar to each other. After calculating the variance of the residuals for each group, we see results of 7.089421, 11.150630, and 9.647955. Since none of these values are dramatically different from each other, we will conclude that the assumption of equal variance is not violated and we will proceed with further analysis.
+
+## Q4: Pairwise comparisons of Adelie - Chinstrap and Chinstrap - Gentoo. Report the estimated difference in means and p-value for test of equal means for each comparison.
+
+```{r}
+levels(penguins$species) #Using this to know what order the contrasts matrix must be
+```
+
+```{r}
+mycontrasts <- rbind(c(1, -1, 0), 
+                     c(1, 0, -1))
+
+rownames(mycontrasts) <- c("Adelie - Chinstrap",
+                           "Adelie - Gentoo")
+
+summary(glht(MyModel, linfct = mycontrasts), test = adjusted("none"))
+```
+
+Our pairwise comparisons show an estimated difference in means of 10.04mm for Adelie - Chinstrap and 8.71mm for Adelie - Gentoo. With a p-value of 2 * 10^-16 for both of these, we have sufficient evidence to reject the null hypothesis of equal means for both of these.
+
+## Q5: Conduct all pairwise group comparisons using TukeyHSD function
+
+```{r}
+summary(glht(MyModel, linfct = mcp(species = "Tukey")))
+```
+Pairwise comparisons for all three species with Tukey adjustment shows a significant difference in means for all three groups, with p-values of < .001, <.001, and .00874 for Chinstrap - Adelie, Gentoo - Adelie, and Gentoo- Chinstrap, respectively.

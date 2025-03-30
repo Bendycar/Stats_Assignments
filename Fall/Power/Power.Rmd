@@ -1,0 +1,98 @@
+---
+title: "Assignment 2: Power Analysis"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+## R Markdown
+
+Your colleague comes to you for help designing an experiment. The desired study will look at potential differences in polycyclic aromatic hydrocarbons (PAHs), known to be linked to cancer, between tipi and shed smoked salmon. 
+
+Your colleague has data from a previous study where four PAHs were measured. For the new study, your colleague plans to measure the some different PAHs but suggests that it is reasonable to use past data to evaluate the number of samples needed to have a well-powered study. Your job is to help your colleague.
+
+Take following steps and answer questions where applicable.
+
+1. Read in the data 'SalmonSmoking_Data.csv'
+
+```{r}
+salmon <- read.csv("C:/Users/Ben/Downloads/SalmonSmoking_Data.csv")
+```
+
+2. Log2 transform all PAH concentrations. This is the scale the data is analyzed on to help stabalize the variances and make a Normal distribution a reasonable assumption. *Note: I would suggest to pivot your data to long form first (making your PAHs one column with names and one column of concentrations).*
+
+```{r}
+log_salmon <- salmon %>% pivot_longer(cols = c(Phenanthrene, Anthracene, Chrysene, Benzo.a.pyrene), names_to = "PAHs", values_to = "concentrations") %>% mutate("Log2 Concentrations" = log2(concentrations))
+```
+3. For data on the log2-scale, compute the mean concentration, sample standard deviation, and sample size for each combination of Treatment and PAH. This means you will have 8 standard deviations and 8 sample sizes.  Store this in a data.frame/tibble.
+
+```{r}
+salmon_table <- log_salmon %>% group_by(Treatment, PAHs) %>% summarize(Mean_concentration = mean(`Log2 Concentrations`), Standard_deviation = sd(`Log2 Concentrations`), Sample_size = n()) %>% ungroup()
+```
+
+4. For each PAH using Treatment as your group variable, compute the absolute log2 fold-change: $|\bar{x_1} - \bar{x_2}|$ $\bar{x_1}$ and $\bar{x_2}$ are group means of the log2 concentrations. Also compute the pooled standard deviations for each PAH using Treatment as your group variable. The pooled standard deviation can be calculated as $s_p = \sqrt{\frac{(n_1-1)*s_1^2 + (n_2-1)*s_2^2}{n_1 + n_2 - 2}}$, where $n_1$ and $n_2$ are the number of observations for each group and $s_1^2$ and $s_2^2$ are the sample variances of each group. You should compute this using the data.frame/tibble and info from 3) using a *group_by* and *summarize* call.
+
+```{r}
+salmon_FC_SD <- salmon_table %>% group_by(PAHs) %>% summarise(Log2_Fold_Change = abs(diff(Mean_concentration)), Pooled_SD = sqrt(
+      ((first(Sample_size) - 1) * first(Standard_deviation)^2 + 
+      (last(Sample_size) - 1) * last(Standard_deviation)^2) / 
+      (first(Sample_size) + last(Sample_size) - 2)
+    )) #Could also have used [1] and [2] instead of first and last, but those aren't given in the documentation
+```
+
+5. For each PAH, using your calculated pooled standard deviations, conduct a power calculation to determine the number of samples required to get a power of 0.8, assuming a Type 1 error of 0.05 and a log2 fold-change of 1 (fold-change of 2 on the original scale of the data). **Be sure to round up to the nearest whole integer.**
+
+```{r}
+
+for (Sample in 1:4) {
+  result <- (power.t.test(
+  power = 0.80,
+  delta = 1,
+  sig.level = 0.05,
+  sd = salmon_FC_SD$Pooled_SD[Sample]
+  ))
+  
+  print(result$n)
+  }
+```
+Anthracene: 11 samples
+Benzo.a.pyrene: 15 samples
+Chrysene: 14 samples
+Phenanthrene: 11 samples
+
+6. Based on the computed fold-changes from the example data. Do you think it's reasonable to assume a two fold-change (log2 fold-change = 1) would be seen with this type of data?
+
+I think this is reasonable, as a log2 fold change of 1.24 appears in the example data. Although this example study was underpowered, the sample size for Antracene was very close to the desired sample size for 80% power, so I still think it's reasonable to see results on a similar order of magnitude. 
+
+7. Based on the maximum number of required samples from your power calculations, how many **total** salmon are needed for the new study? Assume that multiple chemical concentrations can be measured in the same fish.
+
+I think at least 30 fish will be needed, to have the largest number of required samples in each group. 
+
+8. Your colleague has an idea that each salmon could be split with half being tipi smoked and the other half shed smoked. This would create a 'paired study'. Repeat your required sample size calculations in 5 but assume a paired test (*type = "paired"* in the *power.t.test* function). Now, based on your maximum sample size required, how many salmon are needed?
+
+```{r}
+
+for (Sample in 1:4) {
+  result <- (power.t.test(
+  power = 0.80,
+  delta = 1,
+  sig.level = 0.05,
+  sd = salmon_FC_SD$Pooled_SD[Sample],
+  type = "paired"
+  ))
+  
+  print(result$n)
+  }
+```
+Anthracene: 7 samples
+Benzo.a.pyrene: 10 samples
+Chrysene: 9 samples
+Phenanthrene: 7 samples
+
+The maximum sample size is 10. I do not think we will need to double this number, as we are cutting the salmon in half to create our pairs. 
+

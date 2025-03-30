@@ -1,0 +1,162 @@
+---
+title: "Regression and kNN"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ISLR2)
+library(tidyverse)
+```
+
+
+We will look at the Boston data set, which records medv (median house value) for 506 census tracts in Boston. We will seek to predict medv using 12 predictors.
+
+1. Fit a simple linear regression model using medv as the response and lstat as the predictor variable.
+
+```{r}
+# make sure to pull the Boston dataset from the ISLR2 package (not MASS) #
+?ISLR2::Boston
+data("Boston")
+```
+
+```{r}
+Boston %>% unlist() %>% is.na() %>% any()
+
+linear_model <- lm(medv ~ lstat, data = Boston)
+
+summary(linear_model)
+```
+
+2. Plot the data and the fitted linear regression model.
+```{r, fig.cap="Figure 1: Plot of lower status population percent against median owner-occupied home value in thousands of dollars. Linear model trendline is shown in cornflower blue. The data appear to exhibit a weak negative correlation."}
+first_graph <- Boston %>% ggplot(aes(x = lstat, y = medv)) + geom_point() + geom_abline(intercept = 34.55, slope = -0.95, color = "cornflowerblue", size = 1) + xlab("Population lower status percent") + ylab("Median owner-occupied home value ($1000s)")
+
+first_graph
+```
+3. Are any model assumptions violated? Use plots to justify each assumption being violated or not, where appropriate.
+
+```{r, fig.cap="Figure 2: QQ plot of the residuals. The residual of each data point is represented  by a point, and the black line is referred to as the line of normality. Minimal deviation from the line of normality represents a normally distributed sample"}
+
+residuals <- data.frame(
+  Residual = linear_model$residuals,
+  medv = Boston$medv,
+  predicted_values = predict(linear_model, Boston)
+)
+
+QQ <- ggplot(residuals, aes(sample = Residual)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_bw() +
+  xlab("Theoretical Quantiles") + 
+  ylab("Sample Quantiles")
+
+QQ
+```
+```{r, fig.cap="Figure 3: Plot of residuals vs predicted values. Equal variance residuals should appear as a cloud without any notable shapes or patterns, equally distributed throughout the range of the chart"}
+resid_plot <- ggplot(residuals, aes(x = predicted_values, y = Residual)) + 
+    geom_point() +
+    geom_hline(yintercept = 0, color = "firebrick") +
+    xlab("Predicted Values")
+
+resid_plot
+```
+There are 4 main assumptions we care about for simple linear regression:
+
+1. Independence of samples
+2. Constant variance of residuals
+3. Linear relationship between variables
+4. Normal distribution of residuals
+
+The assumption of independence is validated in the experimental design phase, and it is difficult to imagine what would constitute non-independence in this dataset. Therefore, we will proceed with this assumption.
+
+The plot of predicted values vs residuals tests the assumptions of constant variance and linear relationship. In a perfect world, we would see a cloud of points with no clear pattern, but this does not appear to be the case. We can see a clear clumping in the bottom right corner of the graph, and there is an obvious straight line in the top right. Additionally, we can see in figure 1 that the general shape of the trend does not appear to be linear -- it looks closer to an exponential decay curve to me. Therefore, we can conclude that at least one of these assumptions is violated.
+
+The QQ plot tests the normality of the residuals. The perfect distribution in this case would look like adherence to the Line of Normality in the center of the plot. This is clearly not the case, so we conclude that the assumption of normality is also violated. Therefore, we will attempt to log transform the data and evaluate the assumptions again.
+
+```{r, fig.cap="Figure 4: QQ plot of the transformed residuals. Log transformation shows a marginal improvement, but not enough to satisfy the assumption of normality."}
+Boston2 <- Boston
+Boston2$medv <- log10(Boston$medv)
+log_model <-lm(medv ~ lstat, data = Boston2)
+
+residuals2 <- data.frame(
+  Residual = log_model$residuals,
+  medv = Boston2$medv,
+  predicted_values = predict(log_model, Boston2)
+)
+
+QQ2 <- ggplot(residuals2, aes(sample = Residual)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_bw() +
+  xlab("Theoretical Quantiles") + 
+  ylab("Sample Quantiles")
+
+QQ2
+```
+
+```{r, fig.cap="Figure 5: Plot of transformed residuals vs predicted values. Similarly, log transformation shows a modest improvemet, but not enough to satisfy assumptions."}
+resid_plot2 <- ggplot(residuals2, aes(x = predicted_values, y = Residual)) + 
+    geom_point() +
+    geom_hline(yintercept = 0, color = "firebrick") +
+    xlab("Predicted Values (transformed)")
+
+resid_plot2
+```
+
+After log transformation, the diagnostic plots are still not satisfying. Since these underlying assumptions seem to be fundamentally invalid, we will move on to a non-parametric alternative. 
+
+4. Program a function to calculate the predicted value of medv given an lstat value and a number of neighbors k (these should be your two input parameters for your function).
+
+## Steps of kNN with a single predictor:
+a. For a given value of x (i.e. lstat), find the data points with the k-closest x-values.
+b. Compute the mean of y values (i.e. medv) of the k-closest neighbors from step a. This is your fitted value.
+
+```{r}
+my_knn <- function(lstat, k) {
+  nearest <- data.frame("Distance" = abs(Boston$lstat - lstat), "Medv" = Boston$medv)
+  nearest <- nearest %>% arrange(Distance)
+  k_nearest <- nearest[1:k, ]
+  result <- mean(k_nearest$Medv)
+}
+
+test <- my_knn(10,2)
+```
+5. Create a sequence of lstat values that range from the minimum and maximum observed values in the Boston dataset. Make sure your sequence increments by 0.1. Put these values into a data.frame or tibble with one column for the sequence you created.
+
+```{r}
+min_lstat <- min(Boston$lstat)
+max_lstat <- max(Boston$lstat)
+
+my_lstat_sequence <- data.frame("Lstat_sequence" = seq(min_lstat,max_lstat, by = .1))
+```
+
+6. Use mutate() and map() to calculate predicted values for 2 kNN models: 1) with k = 1 , 2) with k = 10. For each model, calculate the fitted/predicted value of medv for each lstat value from 5. You should end this step with a data.frame/tibble with 3 columns (lstat_sequence, fitted_k1, fitted_k10)
+
+```{r}
+my_lstat_sequence <- my_lstat_sequence %>% mutate("fitted_k1" = as.numeric(map(my_lstat_sequence$Lstat_sequence, my_knn, k = 1))) %>% mutate("fitted_k10" = as.numeric(map(my_lstat_sequence$Lstat_sequence, my_knn, k = 10)))
+
+### Note to self: It seems more natural to write the function part as `my_knn(k = 1)`, but R doesn't recognize that each element of the lstat_sequence vector is meant to be passed in for lstat. This notation where `k = 1` is separated by a common looks weird to me but it allows R to take each element as the input for lstat. It is also possible to use an anonymous function: `map(my_lstat_sequence$Lstat_sequence, function(lstat) my_knn(lstat, k = 1)))` but I find that much harder to read. In this case each element is assigned the variable `lstat` which you then explicitly pass to the my_knn function.
+
+### The `as.numeric` argument was added to avoid `Discrete values supplied to continuous scale` error in the ggplot below
+```
+7. For each model, plot the observed data as points and the fitted values using geom_line()
+
+```{r}
+k1_graph <- Boston %>% ggplot(aes(x = lstat, y = medv)) + geom_point() + geom_line(data = my_lstat_sequence, aes(x = Lstat_sequence, y = fitted_k1), color = "chartreuse3", size = .6) + 
+xlab("Population lower status percent") + ylab("Median owner-occupied home value ($1000s)")
+k1_graph
+```
+```{r}
+k10_graph <- Boston %>% ggplot(aes(x = lstat, y = medv)) + geom_point() + geom_line(data = my_lstat_sequence, aes(x = Lstat_sequence, y = fitted_k10), color = "chartreuse3", size = .85) + 
+xlab("Population lower status percent") + ylab("Median owner-occupied home value ($1000s)")
+
+k10_graph
+```
+
+8. Based on plots, which of the models would you choose: kNN with k = 1, kNN with k = 10, or simple linear regression?
+
+Based on our initial data exploration, it is clear that the simple linear regression was not appropriate for modeling this relationship. Visual inspection of the data plotted in figure 1 clearly does not suggest a linear relationship -- to my eyes, the pattern is much more similar to an exponential decay curve. After plotting our residuals and QQ plots, this initial impression was confirmed, and log transformation of the data was still unable to satisfy the assumptions of linear regression. Since we were not able to make regression work on this data set, we move on to a non-parametric alternative. There are no objective metrics available (to my knowledge) to compare the results of k = 1 and k = 10, but k = 10 certainly appears to represent the relationship better than k = 1, in my opinion. The line drawn by k = 1 looks to me like a clear example of overfitting, whereas the k = 10 line appears to follow the center of mass of all the points quite well. For these reasons, I would definitely use the k = 10 kNN model to represent this relationship. 
+
+

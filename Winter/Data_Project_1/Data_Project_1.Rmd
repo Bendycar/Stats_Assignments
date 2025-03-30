@@ -1,0 +1,280 @@
+---
+title: "BI610 Data Project 1"
+author: "Ben Carr"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidymodels)
+library(ggpubr)
+library(GGally)
+library(DT)
+library(agua)
+library(discrim)
+library(kernlab)
+library(glmnet)
+library(pROC)
+library(ROCR)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, results = "hide"}
+heart <- read.csv("C:/Users/Ben/Downloads/Heart.csv")
+heart <- heart %>% drop_na()
+heart <- heart %>% mutate(AHD = if_else(AHD == "No", 0, 1))
+heart <- heart %>% mutate(Thal = case_when(
+  Thal == "normal" ~ 0,
+  Thal == "reversable" ~ 1,
+  Thal == "fixed" ~ 2
+))
+heart <- heart %>% mutate(ChestPain = case_when(
+  ChestPain == "asymptomatic" ~ 0,
+  ChestPain == "typical" ~ 1,
+  ChestPain == "nontypical" ~ 2,
+  ChestPain == "nonanginal" ~ 3
+))
+heart$AHD <- factor(heart$AHD, levels = c(0,1))
+continuous <- heart %>% dplyr::select(c("Age", "RestBP", "MaxHR", "Oldpeak", "Chol"))
+categorical <- heart %>% dplyr::select(-c("Age", "RestBP", "MaxHR", "Oldpeak", "Chol"))
+
+```
+## Exploratory Data Analysis
+
+The goal of this report is to construct a machine learning model to predict diagnosis of heart disease (AHD) based on the data available in heart.csv. This data set contains information for 303 patients about the following variables.
+
+Continuous variables:
+
+Age: Age in years
+
+RestBP: Resting blood pressure in mmHg upon admission to the hospital
+
+MaxHR: Maximum heart rate achieved
+
+Oldpeak: ST depression induced by exercise relative to rest
+
+Chol: Total cholesterol in mg/dL
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+cont_stats <- continuous %>% 
+  pivot_longer(everything(), names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  summarise(
+    Mean = mean(Value, na.rm = TRUE),
+    Median = median(Value, na.rm = TRUE),
+    SD = sd(Value, na.rm = TRUE)
+  )
+
+knitr::kable(cont_stats, caption = "Summary statistics for the continuous variables of interest")
+```
+
+Categorical variables:
+
+Sex: Binary, dummy variable 1 indicates male and 0 indicates female
+
+ChestPain: Four level categorical indicating chest pain type. 0 indicates asymptomatic, 1 indicates typical angina, 2 indicates atypical angina, and 3 indicates non-anginal pain
+
+Fbs: Binary, dummy variable 1 indicates fasting blood sugar is greater than 120mg/dL, 0 indicates below. This is a warning sign of diabetes.
+
+RestECG: Three level categorical indicating resting electrocardiogram results. 0 represents normal ECG, 1 indicates ST-T wave abnormality, and 2 indicates probably or definite left ventricular hypertrophy.
+
+ExAng: Binary, 1 indicates presence of exercised induced angina, 0 represents none.
+
+Slope: Three level categorical representing slope of peak exercise ST segment. 1 indicates upsloping, 2 indicates flat, and 3 represents downsloping. 
+
+Ca: Number of major vessels (0-3) colored by flouroscopy 
+
+Thal: Three level categorical. 0 indicates Normal, 1 indicates reversable deficit, and 2 fixed deficit.
+
+## Model selection
+
+The nature of our predictive problem determines our options when selecting the type of machine learning model to use. In this case, we have both continuous and categorical predictors, that are being used to predict a 2-level categorical response. Of the models discussed this term, the following are capable of handling these parameters: Logistic Regression, Naive Bayes, Random Forest, and SVMs. Each of these will be tested after validating their underlying assumptions.
+
+## Assumption Testing
+
+An advantage of the models selected is that they rely on minimal assumptions about the underlying structure of the data. All models assume independent observations, which is validated in the experimental design phase. Because we have no reason to assume our subjects are dependent in any way -- for example, coming from members of the same family -- we will assume this assumption is not violated.
+
+Logistic regression includes the assumption that the response variable follows a binomial distribution. A binomial distribution simply means that there are two possible responses classes whose probabilities add up to 1 -- a "yes or no" dynamic. Because a patient must either have heart disease or not have heart disease, we can assume that this response class does follow a binomial distribution. 
+
+Naive Bayes adds the assumption of uncorrelated predictor variables. This can be assessed by inspecting the correlation coefficient between each continuous predictor variable.
+
+```{r, echo = FALSE, fig.cap = "Correlations between continuous predictor variables are relativley weak"}
+pairs_plot <- ggpairs(continuous)
+pairs_plot
+```
+
+According to the correlation structure in Figure 1, most continuous predictors are relatively weakly correlated, with the strongest correlation being -0.394 between MaxHR and age. This may slightly weaken the predictive power of the Naive Bayes model, but we will continue with analysis regardless. 
+
+All other models require no further assumptions, so we will proceed with model fitting, hyperparameter tuning, and evaluation.
+
+## Model Fitting
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, results = "hide"}
+
+split_data <- initial_split(heart, prop = 4/5)
+my_train <- training(split_data)
+my_test <- testing(split_data)
+
+my_recipe <- recipe(AHD ~ ., data = my_train)
+
+eng_linear <- svm_linear(cost = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab", scaled = F) 
+
+#eng_poly <- svm_poly(cost = tune(), degree = tune()) %>%
+#  set_mode("classification") %>%
+#  set_engine("kernlab", scaled = F) 
+
+eng_radial <- svm_rbf(cost = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab", scaled = F)
+
+bayes_engine = naive_Bayes()
+
+rf_engine <- rand_forest(trees = tune(), mtry = tune()) %>%
+  set_engine("randomForest") %>%
+  set_mode("classification")
+
+logistic_engine <- logistic_reg() %>%
+  set_engine("glm") %>%
+  set_mode("classification")
+
+rf_grid <- grid_regular(trees(), mtry(range = c(1, ncol(heart)-1)), levels = 3) 
+cost_grid <- grid_regular(parameters(cost()), levels = 5) 
+#cost_poly_grid <- grid_regular(parameters(cost(), degree()), levels = 5)
+log_grid <- grid_regular(parameters(mixture(), penalty()), levels = 5)
+
+wf <- workflow_set(
+  preproc = list("model" = my_recipe),
+  models = list("svm_linear" = eng_linear, #"svm_poly" = eng_poly, 
+                "svm_radial" = eng_radial, "bayes" = bayes_engine, "RF" = rf_engine, "Logistic" = logistic_engine)
+) %>%
+  option_add(id = "model_svm_linear", grid = cost_grid) %>%
+  #option_add(id = "model_svm_poly", grid = cost_poly_grid) %>%
+  option_add(id = "model_svm_radial", grid = cost_grid) %>% 
+  option_add(id = "model_bayes") %>% 
+  option_add(id = "model_RF", grid = rf_grid) %>% 
+  option_add(id = "model_Logistic")#, grid = log_grid)
+
+folds <- vfold_cv(my_train,
+                  v = 5,
+                  strata = AHD)
+
+wf_map <- wf %>%
+  workflow_map(resamples = folds,
+               verbose = TRUE, 
+               seed =  86,
+               metrics = metric_set(accuracy))
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+svmlin_acc <- 
+  wf_map %>% extract_workflow_set_result(id = "model_svm_linear") %>%
+  show_best(metric = "accuracy", n = 1)
+
+svmrad_acc <- 
+  wf_map %>% extract_workflow_set_result(id = "model_svm_radial") %>%
+  show_best(metric = "accuracy", n = 1)
+
+bayes_acc <- 
+  wf_map %>% extract_workflow_set_result(id = "model_bayes") %>%
+  show_best(metric = "accuracy", n = 1)
+
+logistic_acc <- 
+  wf_map %>% extract_workflow_set_result(id = "model_Logistic") %>%
+  show_best(metric = "accuracy", n = 1)
+
+rf_acc <- 
+  wf_map %>% extract_workflow_set_result(id = "model_RF") %>%
+  show_best(metric = "accuracy", n = 1)
+
+svmlin_acc <- svmlin_acc$mean
+svmrad_acc <- svmrad_acc$mean
+bayes_acc <- bayes_acc$mean
+logistic_acc <- logistic_acc$mean
+rf_acc <- rf_acc$mean
+
+predictions <- rbind(svmlin_acc, svmrad_acc, bayes_acc, logistic_acc, rf_acc)
+predictions <- data.frame(predictions)
+predictions <- cbind(Model = c("Linear SVM", "Radial SVM", "Naive Bayes", "Random Forest", "Logistic Regression"), predictions)
+predictions <- data.frame(predictions)
+colnames(predictions) <- c("Model", "Accuracy")
+predictions <- predictions %>%
+  arrange(desc(Accuracy))
+rownames(predictions) <- NULL
+knitr::kable(predictions, caption = "Test set accuracy of all models after hyperparameter tuning")
+```
+The original data set was partitioned into an 80/20 train/test split, and each model was trained with 5-fold cross validation and hyperparameter tuning. The mean accuracy across folds for the best set of hyperparameters is displayed in Table 3. Based on these accuracy results, the logistic regression classifier performed the best. To further assess model performance, ROC curves were constructed and the area under these curves was calculated.
+```{r, echo = FALSE, warning = FALSE, message = FALSE, results = "hide"}
+best_svmlin_params <- wf_map %>%
+  extract_workflow_set_result(id = "model_svm_linear") %>%
+  select_best(metric = "accuracy")
+best_svmlin <- wf_map %>%
+  extract_workflow(id = "model_svm_linear") %>%
+  finalize_workflow(best_svmlin_params) %>%
+  fit(data = my_train)
+
+best_svmrad_params <- wf_map %>%
+  extract_workflow_set_result(id = "model_svm_radial") %>%
+  select_best(metric = "accuracy")
+best_svmrad <- wf_map %>%
+  extract_workflow(id = "model_svm_radial") %>%
+  finalize_workflow(best_svmrad_params) %>%
+  fit(data = my_train)
+
+best_bayes_params <- wf_map %>%
+  extract_workflow_set_result(id = "model_bayes") %>%
+  select_best(metric = "accuracy")
+best_bayes <- wf_map %>%
+  extract_workflow(id = "model_bayes") %>%
+  finalize_workflow(best_bayes_params) %>%
+  fit(data = my_train)
+
+best_logistic_params <- wf_map %>%
+  extract_workflow_set_result(id = "model_Logistic") %>%
+  select_best(metric = "accuracy")
+best_logistic <- wf_map %>%
+  extract_workflow(id = "model_Logistic") %>%
+  finalize_workflow(best_logistic_params) %>%
+  fit(data = my_train)
+
+best_rf_params <- wf_map %>%
+  extract_workflow_set_result(id = "model_RF") %>%
+  select_best(metric = "accuracy")
+best_rf <- wf_map %>%
+  extract_workflow(id = "model_RF") %>%
+  finalize_workflow(best_rf_params) %>%
+  fit(data = my_train)
+```
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE, fig.cap = "ROC curves for all models after hyperparameter tuning"}
+roc_data <- bind_rows(
+  predict(best_svmlin, new_data = my_test, type = "prob") %>% mutate(model = "SVM linear"),
+  predict(best_svmrad, new_data = my_test, type = "prob") %>% mutate(model = "SVM radial"),
+  predict(best_rf, new_data = my_test, type = "prob") %>% mutate(model = "Random Forest"),
+  predict(best_bayes, new_data = my_test, type = "prob") %>% mutate(model = "Naive Bayes"),
+  predict(best_logistic, new_data = my_test, type = "prob") %>% mutate(model = "Logistic Regression")
+) %>%
+  mutate(Truth = rep(my_test$AHD, 5))
+
+rocs <- roc_data %>% 
+  group_by(model) %>%
+  roc_curve(Truth, .pred_0) %>%
+  autoplot()
+
+rocs
+
+aucs <- roc_data %>%
+  group_by(model) %>%
+  roc_auc(Truth, .pred_0) %>%
+  arrange(desc(.estimate))
+
+colnames(aucs) <- c("Model", "Metric", "Estimator", "AUC")
+knitr::kable(aucs, caption = "Area under the curve of all models")
+```
+
+Table 3 displays the area under the ROC curve for all models, also displayed below in figure 2. After assessing the AUROC of all models, all models except for the radial SVM appear to perform equally well. Due to stochasticity in machine learning algorithms, the model with the single highest accuracy changes every time this code is run, making it difficult to assess which model "truely" has the highest AUROC. Therefore, based on the accuracy results, which appear to be slightly less volatile, I conclude that logistic regression appears to be the best performing classifier for this task.  

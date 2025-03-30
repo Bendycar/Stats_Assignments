@@ -1,0 +1,70 @@
+---
+title: "Stats_Bi610_HW5"
+author: "Ben Carr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+Background: We would like to conduct a t-test on two groups of test scores to detect if the mean score of the two groups are significantly different. Before we can perform this test, we must validate three assumptions about the data:
+
+1. The data are independent. This assumption is largely decided by the experimental design -- in this situation, we are allowed to assume that this has been fulfilled.
+
+2. The distirubtion of the residuals in approximately normal. To test this, we will produce a qq-plot and assess how far the data vary from the line of normality.
+
+3. There is equal variance between the groups. To test this, we will produce boxplots of the residuals and assess their difference, and calculate the variance of each group and compare these values.
+
+## Loading the data
+```{r}
+MyData <- read.csv("C:/Users/Ben/Downloads/ICA_Assumption_Data.csv")
+```
+
+## Adding the residuals
+```{r}
+MyData <- MyData %>% group_by(Group) %>% mutate(Residual = Score - mean(Score))
+```
+
+## Normality assumption
+
+```{r}
+QQ <- ggplot(MyData, aes(sample = Residual)) +
+  geom_qq() +
+  geom_qq_line() +
+  theme_bw() +
+  xlab("Theoretical Quantiles") + 
+  ylab("Sample Quantiles")
+
+QQ
+```
+
+The distribution of residuals on our qq-plot appears to follow the line of normality somewhat well. Although there are some deviations at the tails, the vast majority of the points appear to sit along the line. Therefore, we will proceed to our next check as the normality of residuals assumption does not appear to be violated.
+
+## Equal variance assumption
+
+```{r}
+Variance <- ggplot(MyData, aes(x = Group, y = Residual, fill = Group)) +
+  geom_boxplot() +
+  theme_bw()
+
+Variance
+
+MyData %>% summarise(Variance = var(Residual))
+
+MyData
+```
+
+The boxplots produced appear to be very similar, and the values for variance of the residual are about 239.3 for group A and 244.6 for group B. Therefore, we will accept the assumption of equal variance of the residuals, and proceed with our t-test.
+
+## The t-test
+
+```{r}
+MyModel <- t.test(Score ~ Group, data = MyData, alternative = "two.sided", var.equal = TRUE)
+
+MyModel
+```
+
+Our t-test produces a p-value of 0.1546. Therefore, we do not have sufficient evidence to reject the null hypothesis, and cannot conclude that there is any significant difference in mean test scores between our two groups.
